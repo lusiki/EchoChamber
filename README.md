@@ -9,7 +9,7 @@
 
 
 
+# Analysis of Echo Chambers on CRO Reddit and Forum
 
 
-# EchoChamber
-Analysis of Echo Chambers on CRO Reddit and Forum
+

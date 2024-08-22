@@ -1,0 +1,47 @@
+---
+title: "Exploratory"
+output: html_document
+date: "2024-08-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readxl)
+library(dplyr)
+library(stringi)
+library(data.table)
+library(stringr)
+library(writexl)
+library(openxlsx)
+library(ggplot2)
+```
+
+
+
+## Data Stats
+
+```{r}
+komentari_title <- readxl::read_excel("C:/Users/lukas/Dropbox/HS/TAMARA/EchoChamber/Data/komentari_select_title.xlsx")
+komentari_url <- readxl::read_excel("C:/Users/lukas/Dropbox/HS/TAMARA/EchoChamber/Data/komentari_select_url.xlsx")
+
+```
+
+
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
