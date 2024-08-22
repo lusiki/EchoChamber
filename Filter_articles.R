@@ -47,8 +47,11 @@ komentari %>%
   count(DATE) %>%
   arrange(DATE)
 
-# show visualisation of number of comments per date
+# filter only dates in the range 2024-03-14 to 2024-06-10
+komentari <- komentari %>%
+  filter(DATE >= "2024-03-14" & DATE <= "2024-06-10")
 
+# show visualisation of number of comments per date
 komentari %>%
   select(DATE) %>%
   count(DATE) %>%
@@ -58,25 +61,35 @@ komentari %>%
        x = "Date",
        y = "Number of comments")
 
-
-# filter only dates in the ragen 2024-03-14 to 2024-06-10
-
-komentari <- komentari %>%
-  filter(DATE >= "2024-03-14" & DATE <= "2024-06-10")
+# show visualisation of number of comments per date and source type
 
 
-komentari_select %>%
-  select(DATE) %>%
-  count(DATE) %>%
-  ggplot(aes(x = DATE, y = n)) +
+komentari %>%
+  select(DATE, SOURCE_TYPE) %>%
+  count(DATE, SOURCE_TYPE) %>%
+  ggplot(aes(x = DATE, y = n, color = SOURCE_TYPE)) +
   geom_line() +
+  facet_wrap(~SOURCE_TYPE, scales = "free_y") +
+  labs(title = "Number of comments per date",
+       x = "Date",
+       y = "Number of comments") 
+  
+
+# add rolling average line for each source type
+
+komentari %>%
+  select(DATE, SOURCE_TYPE) %>%
+  count(DATE, SOURCE_TYPE) %>%
+  ggplot(aes(x = DATE, y = n, color = SOURCE_TYPE)) +
+  geom_line() +
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~SOURCE_TYPE, scales = "free_y") +
   labs(title = "Number of comments per date",
        x = "Date",
        y = "Number of comments")
 
 
-
-
+#### FIRST FILTER-----
 # Replace 'your_column_name' with the actual name of the column you want to search
 your_column_name <- "TITLE"
 
@@ -124,7 +137,7 @@ for (i in 1:num_batches) {
   # Save or further process batch_data if necessary
 }
 
-komentari_select <- komentari[has_word==T,]
+komentari_select_title <- komentari[has_word==T,]
 
 # group by SOURCE_TYPE and count
 komentari_select %>%
@@ -140,4 +153,59 @@ komentari_select %>%
   arrange(desc(n)) 
 
 
-write.xlsx(komentari_select, "C:/Users/lukas/Dropbox/HS/TAMARA/forum_i_reddit.xlsx")
+write.xlsx(komentari_select_title, "C:/Users/lukas/Dropbox/HS/TAMARA/EchoChamber/komentari_select_title.xlsx")
+
+
+#### SECOND FILTER-----
+
+# Replace 'your_column_name' with the actual name of the column you want to search
+your_column_name <- "URL"
+
+
+# Define the function to check for matches
+check_matches <- function(text, words_vector) {
+  any(stri_detect_regex(text, words_vector, negate = FALSE))
+}
+
+# Define the words vector
+words_vector <- c("hdz", "izbor", "parlament", "keki", "list", "anket")
+
+# Define batch size
+batch_size <- 1000
+
+# Calculate the number of batches
+num_batches <- ceiling(nrow(komentari) / batch_size)
+
+# Loop through each batch
+for (i in 1:num_batches) {
+  
+  start_time <- Sys.time()
+  
+  # Calculate the start and end row indices for the current batch
+  start_idx <- (i - 1) * batch_size + 1
+  end_idx <- min(i * batch_size, nrow(komentari))
+  
+  # Print the current batch number and row indices
+  cat(sprintf("Processing batch %d (rows %d to %d)...\n", i, start_idx, end_idx))
+  
+  # Subset the data table for the current batch and apply the operations
+  komentari[start_idx:end_idx, `:=` (
+    has_word = sapply(.SD[[your_column_name]], check_matches, words_vector),
+    matched_word = sapply(.SD[[your_column_name]], function(x) paste(unlist(stri_extract_all_regex(x, words_vector)), collapse=", "))
+  ), .SDcols = your_column_name]
+  
+  batch_data <- komentari[start_idx:end_idx]
+  
+  end_time <- Sys.time()
+  duration <- end_time - start_time
+  
+  # Print the duration for the current batch
+  cat(sprintf("Batch %d processed in %f seconds.\n", i, duration))
+  
+  # Save or further process batch_data if necessary
+}
+
+komentari_select_url <- komentari[has_word==T,]
+
+
+write.xlsx(komentari_select_url, "C:/Users/lukas/Dropbox/HS/TAMARA/EchoChamber/komentari_select_url.xlsx")
