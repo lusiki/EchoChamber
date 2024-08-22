@@ -1,10 +1,13 @@
 
 
 
+<p align="center">
+  <img src="./Echo.jpg" width="750" title="hover text">
+</p> 
 
-# add photo from repositor ro reADME.md
 
-![Echo](C:/Users/lukas/Dropbox/HS/TAMARA/EchoChamber/Echo.jpg)
+
+
 
 
 
