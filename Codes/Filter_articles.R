@@ -168,7 +168,10 @@ check_matches <- function(text, words_vector) {
 }
 
 # Define the words vector
-words_vector <- c("hdz", "izbor", "parlament", "keki", "list", "anket")
+words_vector <- c( "hdz", "izbor", "parlament", "keki", "list", "anket")
+words_vector <- c("https://www.reddit.com/r/croatia/comments/1c86ad0")
+
+
 
 # Define batch size
 batch_size <- 1000

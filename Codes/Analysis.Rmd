@@ -1,0 +1,126 @@
+---
+title: "Analysis"
+author: "Lux"
+date: "2024-09-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r echo=F, eval=F, message=F , warning= FALSE}
+library(tidyverse)
+library(readxl)
+library(xlsx)
+library(here)
+library(kableExtra)
+library(DT)
+library(purrr)
+library(data.table)
+library(tidytext)
+library(dplyr)
+library(lubridate)
+library(anytime)
+library(grid)
+library(wordcloud)
+library(reshape2)
+library(ggraph)
+library(widyr)
+library(topicmodels)
+library(ggthemes)
+library(xlsx)
+library(knitr)
+library(kableExtra)
+library(stopwords)
+
+```
+
+
+
+```{r echo=F, eval=F, message=F , warning= FALSE}
+# Load data from Data folder
+
+dta <- read_excel(here("Data", "komentari_final.xlsx"))
+
+
+```
+
+
+
+# Basic descriptives
+
+#### Vremenski raspon analize
+```{r echo=F, eval=F, message=F , warning= FALSE}
+# date range
+range(dta$DATE)
+```
+
+
+```{r echo=F, eval=F, message=F , warning= FALSE}
+# number of articles
+nrow(dta)
+
+```
+
+
+#### Deskriptiva na dnevnoj razini
+```{r echo=F, eval=F, message=F , warning= FALSE}
+# articles over time
+daily_counts <- dta %>%
+  group_by(DATE) %>%
+  summarise(count = n())
+
+# descriptives 
+summ <- daily_counts %>% 
+  summarize(min = min(count), max = max(count), 
+            mean = mean(count), q1= quantile(count, probs = 0.25), 
+            median = median(count), q3= quantile(count, probs = 0.75),
+            sd = sd(count)) %>%
+  mutate_if(is.numeric, round, digits=2) 
+
+summ
+```
+
+#### Broj objava po danima  
+```{r echo=F, eval=F, message=F , warning= FALSE}
+# create plot of articles over time
+ggplot(data = daily_counts, aes(x = DATE, y = count)) +
+  geom_line() +
+  labs(x = "Date", y = "Number of Articles")
+ 
+
+```
+
+
+#### Broj objava po izvoru 
+```{r echo=F, eval=T, message=F , warning= FALSE}
+# Portals by activity
+activity <- dta %>%
+  group_by(FROM) %>%
+  summarise(count = n()) %>%
+  mutate(percent = round(count / sum(count) * 100,2)) %>% 
+  arrange(desc(count))
+
+datatable(activity, options = list(scrollX = TRUE, scrollY = "500px"))
+
+
+
+
+
+kable_output <- activity %>%
+  kable(format = "pandoc",
+        col.names = c("Izvor", "Broj objava", "%"), 
+        caption = "Objava po izvorima")
+
+kable_output
+
+
+
+
+```
+
+```
+
