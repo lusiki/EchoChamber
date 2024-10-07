@@ -35,6 +35,8 @@ library(xlsx)
 library(knitr)
 library(kableExtra)
 library(stopwords)
+library(igraph)
+library(ggraph)
 
 ```
 
@@ -44,6 +46,10 @@ library(stopwords)
 # Load data from Data folder
 
 dta <- read_excel(here("Data", "komentari_final.xlsx"))
+
+
+dta <- dta %>%
+  mutate(document = row_number())
 ```
 
 
@@ -276,40 +282,6 @@ n_tokenTidy %>%
 ```
 
 
-```{r echo=F, eval=T, message=F , warning= FALSE}
-# dim before tokenize
-#dim(dta)
-
-# tokenize
-dta %>% 
-  unnest_tokens(word, FULL_TEXT) -> n_token
-
-# dim after tokenize
-#dim(n_token)
-
-# check
-# fb_token %>% 
-#   select(FROM, word, MENTION_SNIPPET ) %>%
-#     sample_n(.,100)
-
-# remove stop words, numbers, single letters
-n_token %>% 
-  anti_join(stop_corpus, by = "word") %>%
-  mutate(word = gsub("\\d+", NA, word)) %>%
-  mutate(word = gsub("^[a-zA-Z]$", NA, word)) -> n_tokenTidy
-# remove NA
-n_tokenTidy %>%
-  filter(!is.na(word)) -> n_tokenTidy
-
-# check
-# fb_tokenTidy  %>% 
-#   select(FROM, word, MENTION_SNIPPET ) %>%
-#   sample_n(.,100)
-
-# dim after clean
-#dim(n_tokenTidy)
-
-```
 
 
 ### Word frequency (txt)
@@ -683,6 +655,277 @@ bigrams_united %>%
   filter(n>1) %>%
   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
 ```
+
+
+```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+
+dtm <- n_tokenTidy %>%
+  count(document, word) %>%
+  cast_dtm(document, word, n)
+
+# Perform Latent Dirichlet Allocation (LDA) for topic modeling
+# Here, k = number of topics. You can adjust this based on your data
+lda_model2 <- LDA(dtm, k = 2, control = list(seed = 1234))
+
+# Tidy the LDA output
+lda_topics <- tidy(lda_model2, matrix = "beta")
+
+# Get the top terms for each topic
+top_terms <- lda_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 15) %>% # Adjust 'n' for the number of terms you want to show
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Print the top terms for each topic
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "",
+       x = NULL, y = "Beta")
+
+
+
+
+```
+
+
+```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+lda_model3 <- LDA(dtm, k = 3, control = list(seed = 1234))
+
+# Tidy the LDA output
+lda_topics <- tidy(lda_model3, matrix = "beta")
+
+# Get the top terms for each topic
+top_terms <- lda_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 15) %>% # Adjust 'n' for the number of terms you want to show
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Print the top terms for each topic
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "",
+       x = NULL, y = "Beta")
+
+```
+
+
+```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+lda_model4 <- LDA(dtm, k = 4, control = list(seed = 1234))
+
+# Tidy the LDA output
+lda_topics <- tidy(lda_model4, matrix = "beta")
+
+# Get the top terms for each topic
+top_terms <- lda_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 15) %>% # Adjust 'n' for the number of terms you want to show
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Print the top terms for each topic
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(title = "",
+       x = NULL, y = "Beta")
+```
+
+
+
+
+
+```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+
+
+# Define target words for analysis
+target_words <- c("hdz", "sdp", "dp", "parlament", "izbori", "problem", "glas", "stranka", "možemo")
+
+#
+
+# Filter for more frequent words to reduce dimensionality
+frequent_words <- n_tokenTidy %>%
+  count(word) %>%
+  filter(n >= 25) %>%
+  pull(word)
+
+# Filter the original tidy text data to include only frequent words
+n_tokenTidy_filtered <- n_tokenTidy %>%
+  filter(word %in% frequent_words)
+
+# Find co-occurring words with the target words
+co_occurrences <- n_tokenTidy_filtered %>%
+  pairwise_count(word, document, sort = TRUE) %>%
+  filter(item1 %in% target_words | item2 %in% target_words) %>%
+  arrange(desc(n))
+
+# Calculate word correlations with the target words
+correlated_words <- n_tokenTidy_filtered %>%
+  pairwise_cor(word, document, sort = TRUE) %>%
+  filter(item1 %in% target_words | item2 %in% target_words)
+
+# Display the results
+print("Most Frequent Co-occurrences:")
+datatable(co_occurrences, options = list(pageLength = 10, scrollX = TRUE), caption = 'Most Frequent Co-occurrences with Target Words')
+print("Most Correlated Words:")
+datatable(correlated_words, options = list(pageLength = 10, scrollX = TRUE), caption = 'Most Correlated Words with Target Words')
+# Visualization of Co-Occurrences
+#  Visualization of Co-Occurrences
+# Select top 15 co-occurrences for visualization
+top_co_occurrences <- co_occurrences %>%
+  slice_max(n, n = 15)
+
+# Plot co-occurrences
+ggplot(top_co_occurrences, aes(x = reorder(paste(item1, item2, sep = " & "), n), y = n)) +
+  geom_col(fill = "skyblue") +
+  coord_flip() +
+  labs(title = "Top 15 Co-occurring Words",
+       x = "Word Pair",
+       y = "Frequency of Co-occurrence") +
+  theme_minimal()
+
+# Visualization of Correlations
+# Select top 15 correlations for visualization
+top_correlations <- correlated_words %>%
+  slice_max(correlation, n = 15)
+
+# Create a graph object for network visualization
+correlation_graph <- top_correlations %>%
+  graph_from_data_frame()
+
+# Plot the correlation network
+ggraph(correlation_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), color = "dodgerblue") +
+  geom_node_point(color = "darkred", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void() +
+  labs(title = "Top 15 Word Correlations with Target Words") +
+  theme(legend.position = "none")
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+# Define target words for analysis
+target_words <- c("hdz", "sdp", "dp", "parlament", "izbori", "problem", "glas", "stranka", "možemo")
+
+# Ensure n_tokenTidy has a document identifier column
+n_tokenTidy <- n_tokenTidy %>%
+  mutate(document = row_number())
+
+# Filter for more frequent words to reduce dimensionality
+frequent_words <- n_tokenTidy %>%
+  count(word) %>%
+  filter(n >= 50) %>%
+  pull(word)
+
+
+# Filter the original tidy text data to include only frequent words
+n_tokenTidy_filtered <- n_tokenTidy %>%
+  filter(word %in% frequent_words)
+
+
+# Calculate word correlations
+correlated_words <- n_tokenTidy_filtered %>%
+  pairwise_cor(word, document, sort = TRUE)
+
+# Find top 15 correlated words for each target word
+top_correlations_by_target <- correlated_words %>%
+  filter(item1 %in% target_words | item2 %in% target_words) %>%
+  mutate(
+    target = ifelse(item1 %in% target_words, item1, item2),
+    word = ifelse(item1 %in% target_words, item2, item1)
+  ) %>%
+  filter(word != target) %>%
+  group_by(target) %>%
+  slice_max(correlation, n = 15) %>%
+  ungroup()
+
+# Visualization: Faceted bar chart of top correlations
+ggplot(top_correlations_by_target, aes(x = reorder(word, correlation), y = correlation)) +
+  geom_col(fill = "skyblue") +
+  coord_flip() +
+  facet_wrap(~ target, scales = "free_y") +
+  labs(
+    title = "Top 15 Correlated Words with Target Words",
+    x = "Word",
+    y = "Correlation"
+  ) +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r eval = F}
+# Count word occurrences by date
+word_counts_time <- tidy_text %>%
+  count(date, word) %>%
+  complete(date, word, fill = list(n = 0)) # Fill missing dates with zeroes
+
+# Calculate time correlation of word frequencies
+time_correlations <- word_counts_time %>%
+  pairwise_cor(word, date, n, sort = TRUE)
+
+# Display time correlations
+print("Time Correlations between Target Words:")
+print(time_correlations)
+
+# Optional: Plot time trends of words
+word_counts_time %>%
+  ggplot(aes(x = date, y = n, color = word)) +
+  geom_line() +
+  labs(title = "Word Frequency Over Time", x = "Date", y = "Frequency") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
 
 
 
