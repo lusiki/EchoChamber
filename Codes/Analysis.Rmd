@@ -829,39 +829,7 @@ co_occurrences %>%
 
 
 
-
-
-
-
-
-
-
-```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
-# Define target words for analysis
-target_words <- c("hdz", "sdp", "dp", "parlament", "izbori", "problem", "glas", "stranka", "možemo")
-
-# Ensure n_tokenTidy has a document identifier column
-n_tokenTidy <- n_tokenTidy %>%
-  mutate(document = row_number())
-
-# Filter for more frequent words to reduce dimensionality
-frequent_words <- n_tokenTidy %>%
-  count(word) %>%
-  filter(n >= 50) %>%
-  pull(word)
-
-
-# Filter the original tidy text data to include only frequent words
-n_tokenTidy_filtered <- n_tokenTidy %>%
-  filter(word %in% frequent_words)
-
-
-# Calculate word correlations
-correlated_words <- n_tokenTidy_filtered %>%
-  pairwise_cor(word, document, sort = TRUE)
-
-
-```
+## Correlations between words
 
 
 
@@ -876,35 +844,6 @@ correlated_words <- n_tokenTidy_filtered %>%
 
 
 
-
-
-
-
-
-
-
-
-```{r eval = F}
-# Count word occurrences by date
-word_counts_time <- tidy_text %>%
-  count(date, word) %>%
-  complete(date, word, fill = list(n = 0)) # Fill missing dates with zeroes
-
-# Calculate time correlation of word frequencies
-time_correlations <- word_counts_time %>%
-  pairwise_cor(word, date, n, sort = TRUE)
-
-# Display time correlations
-print("Time Correlations between Target Words:")
-print(time_correlations)
-
-# Optional: Plot time trends of words
-word_counts_time %>%
-  ggplot(aes(x = date, y = n, color = word)) +
-  geom_line() +
-  labs(title = "Word Frequency Over Time", x = "Date", y = "Frequency") +
-  theme_minimal()
-```
 
 
 
