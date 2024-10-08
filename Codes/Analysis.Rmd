@@ -657,6 +657,10 @@ bigrams_united %>%
 ```
 
 
+
+#### Tematska analiza
+
+
 ```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
 
 dtm <- n_tokenTidy %>%
@@ -748,7 +752,7 @@ top_terms %>%
 
 
 
-
+## Words that cooccur with target words
 
 ```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
 
@@ -770,52 +774,56 @@ n_tokenTidy_filtered <- n_tokenTidy %>%
 
 # Find co-occurring words with the target words
 co_occurrences <- n_tokenTidy_filtered %>%
-  pairwise_count(word, document, sort = TRUE) %>%
-  filter(item1 %in% target_words | item2 %in% target_words) %>%
+  pairwise_count(word, document, sort = TRUE)  %>%
   arrange(desc(n))
 
-# Calculate word correlations with the target words
-correlated_words <- n_tokenTidy_filtered %>%
-  pairwise_cor(word, document, sort = TRUE) %>%
-  filter(item1 %in% target_words | item2 %in% target_words)
 
-# Display the results
-print("Most Frequent Co-occurrences:")
-datatable(co_occurrences, options = list(pageLength = 10, scrollX = TRUE), caption = 'Most Frequent Co-occurrences with Target Words')
-print("Most Correlated Words:")
-datatable(correlated_words, options = list(pageLength = 10, scrollX = TRUE), caption = 'Most Correlated Words with Target Words')
-# Visualization of Co-Occurrences
-#  Visualization of Co-Occurrences
-# Select top 15 co-occurrences for visualization
-top_co_occurrences <- co_occurrences %>%
-  slice_max(n, n = 15)
+co_occurrences %>%
+  filter(item1 %in% "hdz") %>%
+  arrange(desc(n)) %>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+  
+co_occurrences %>%
+  filter(item1 %in% "sdp") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
 
-# Plot co-occurrences
-ggplot(top_co_occurrences, aes(x = reorder(paste(item1, item2, sep = " & "), n), y = n)) +
-  geom_col(fill = "skyblue") +
-  coord_flip() +
-  labs(title = "Top 15 Co-occurring Words",
-       x = "Word Pair",
-       y = "Frequency of Co-occurrence") +
-  theme_minimal()
+co_occurrences %>%
+  filter(item1 %in% "dp") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
 
-# Visualization of Correlations
-# Select top 15 correlations for visualization
-top_correlations <- correlated_words %>%
-  slice_max(correlation, n = 15)
 
-# Create a graph object for network visualization
-correlation_graph <- top_correlations %>%
-  graph_from_data_frame()
+co_occurrences %>%
+  filter(item1 %in% "parlament") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
 
-# Plot the correlation network
-ggraph(correlation_graph, layout = "fr") +
-  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), color = "dodgerblue") +
-  geom_node_point(color = "darkred", size = 5) +
-  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
-  theme_void() +
-  labs(title = "Top 15 Word Correlations with Target Words") +
-  theme(legend.position = "none")
+co_occurrences %>%
+  filter(item1 %in% "izbori") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+
+ co_occurrences %>%
+  filter(item1 %in% "problem") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+
+co_occurrences %>%
+  filter(item1 %in% "glas") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+
+ co_occurrences %>%
+  filter(item1 %in% "stranka") %>%
+  arrange(desc(n))%>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+
+
+co_occurrences %>%
+  filter(item1 %in% "možemo") %>%
+  arrange(desc(n))
+
 
 ```
 
@@ -852,29 +860,7 @@ n_tokenTidy_filtered <- n_tokenTidy %>%
 correlated_words <- n_tokenTidy_filtered %>%
   pairwise_cor(word, document, sort = TRUE)
 
-# Find top 15 correlated words for each target word
-top_correlations_by_target <- correlated_words %>%
-  filter(item1 %in% target_words | item2 %in% target_words) %>%
-  mutate(
-    target = ifelse(item1 %in% target_words, item1, item2),
-    word = ifelse(item1 %in% target_words, item2, item1)
-  ) %>%
-  filter(word != target) %>%
-  group_by(target) %>%
-  slice_max(correlation, n = 15) %>%
-  ungroup()
 
-# Visualization: Faceted bar chart of top correlations
-ggplot(top_correlations_by_target, aes(x = reorder(word, correlation), y = correlation)) +
-  geom_col(fill = "skyblue") +
-  coord_flip() +
-  facet_wrap(~ target, scales = "free_y") +
-  labs(
-    title = "Top 15 Correlated Words with Target Words",
-    x = "Word",
-    y = "Correlation"
-  ) +
-  theme_minimal()
 ```
 
 
