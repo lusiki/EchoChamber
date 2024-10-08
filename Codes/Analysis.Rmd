@@ -833,11 +833,106 @@ co_occurrences %>%
 
 
 
+```{r komm, eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+
+word_cors <- n_tokenTidy %>%
+   group_by(word) %>%
+   filter(n() >= 20) %>%
+   pairwise_cor(word, document, sort = TRUE)
+ 
+# 
+# word_cors %>%
+#   filter(item1 == "hdz")%>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# 
+# 
+# word_cors %>%
+#   filter(item1 == "sdp")%>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# 
+# word_cors%>%
+#   filter(item1 %in% "dp") %>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# 
+# word_cors %>%
+#   filter(item1 %in% "parlament") %>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# word_cors %>%
+#   filter(item1 %in% "izbori") %>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# word_cors %>%
+#   filter(item1 %in% "problem") %>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# word_cors %>%
+#   filter(item1 %in% "glas") %>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# word_cors %>%
+#   filter(item1 %in% "stranka") %>%
+#   arrange(desc(n))%>%
+#   datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+# 
+# 
+# word_cors %>%
+#   filter(item1 %in% "možemo") %>%
+#   arrange(desc(n))
+
+word_cors %>%
+  filter(item1 %in% c("hdz", "sdp", "dp", "parlament","izbori", "problem", "glas", "stranka", "možemo")) %>%
+  group_by(item1) %>%
+  slice_max(correlation, n = 10) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+
+
+
+```
 
 
 
 
 
+```{r komm2, eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
+word_cors %>%
+  filter(correlation > .55) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+
+
+
+
+```{r}
+word_cors <- n_tokenTidy %>%
+  group_by(word, DATE) %>%
+  filter(n() >= 20) %>%
+  ungroup() %>%
+  pairwise_cor(word, document, sort = TRUE) %>%
+  left_join(select(n_tokenTidy, document, DATE), by = "document")
+```
 
 
 
