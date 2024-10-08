@@ -923,21 +923,65 @@ word_cors %>%
 
 
 
+# Korelacija kroz vrijeme (dan)
 
+```{r komm3, eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15} 
 
-```{r}
-word_cors <- n_tokenTidy %>%
+wcs <- n_tokenTidy %>%
   group_by(word, DATE) %>%
-  filter(n() >= 20) %>%
+  filter(n() >= 40) %>%
   ungroup() %>%
-  pairwise_cor(word, document, sort = TRUE) %>%
-  left_join(select(n_tokenTidy, document, DATE), by = "document")
+  pairwise_cor(word, document, sort = TRUE)
+
+wcs %>%
+  datatable(., options = list(scrollX = TRUE, scrollY = "500px"))
+
+
+wcs %>%
+  filter(item1 %in% c("hdz", "sdp", "dp", "parlament","izbori", "problem", "glas", "stranka", "možemo")) %>%
+  group_by(item1) %>%
+  slice_max(correlation, n = 10) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+
+
 ```
 
 
+# Korelacija kroz vrijeme (tjedan)
 
 
+```{r komm4, eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
 
+library(lubridate)
+ # for pairwise_cor function
+
+# Convert date to the start of the week and then calculate correlations by week
+wcs <- n_tokenTidy %>%
+  mutate(week = floor_date(DATE, unit = "week")) %>%
+  group_by(word, week) %>%
+  filter(n() >= 20) %>%
+  ungroup() %>%
+  pairwise_cor(word, document, sort = TRUE)
+
+
+wcs %>%
+  filter(item1 %in% c("hdz", "sdp", "dp", "parlament","izbori", "problem", "glas", "stranka", "možemo")) %>%
+  group_by(item1) %>%
+  slice_max(correlation, n = 10) %>%
+  ungroup() %>%
+  mutate(item2 = reorder(item2, correlation)) %>%
+  ggplot(aes(item2, correlation)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item1, scales = "free") +
+  coord_flip()
+
+```
 
 
 
