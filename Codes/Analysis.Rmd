@@ -331,6 +331,102 @@ gg_sentiment_kroz_vrijeme_qv
 vizualiziraj_sentiment(n_tokenTidy,"day")
 ```
 
+# dnevni sentimentn(CroSentilex)
+
+```{r  echo=F, eval=T, message=F , warning= FALSE}
+
+
+vizualiziraj_sentiment <- function(dataset, frq = "day") {
+dataset %>%
+  inner_join( Crosentilex_sve, by = "word") %>%
+  filter(!is.na(word)) %>%
+  select(word, brija, DATE, sentiment) %>% 
+  unique() %>%
+  spread(. , brija, sentiment) %>%
+  mutate(sentiment = POZ - NEG) %>%
+  select(word, DATE, sentiment) %>% 
+  group_by(word) %>% 
+  mutate(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate( score = sentiment*count) %>%
+  ungroup() %>%
+  group_by(DATE) %>%
+  arrange(desc(DATE)) -> sm
+ 
+sm %>%
+  select(DATE, score) %>%
+  group_by(DATE = floor_date(DATE, frq)) %>%
+  summarise(Dnevni_sent = sum(score, na.rm = TRUE)) %>%
+  ggplot(., aes(DATE, Dnevni_sent)) +
+  geom_bar(stat = "identity") + 
+  ggtitle(paste0("Frequency:", frq)) +
+  ylab("SentimentScore") +
+  #make it black and white
+  theme_minimal() +
+  scale_x_datetime(
+      date_breaks = "3 days",  # Adjust the interval as needed
+      date_labels = "%Y-%m-%d",
+      expand = c(0, 0)
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )-> gg_sentiment_kroz_vrijeme_qv
+gg_sentiment_kroz_vrijeme_qv
+}
+vizualiziraj_sentiment(n_tokenTidy,"day")
+
+
+```
+
+# tjedni sentiment (CroSentilex)
+
+
+```{r  echo=F, eval=T, message=F , warning= FALSE}
+
+
+vizualiziraj_sentiment <- function(dataset, frq = "day") {
+dataset %>%
+  inner_join( Crosentilex_sve, by = "word") %>%
+  filter(!is.na(word)) %>%
+  select(word, brija, DATE, sentiment) %>% 
+  unique() %>%
+  spread(. , brija, sentiment) %>%
+  mutate(sentiment = POZ - NEG) %>%
+  select(word, DATE, sentiment) %>% 
+  group_by(word) %>% 
+  mutate(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate( score = sentiment*count) %>%
+  ungroup() %>%
+  group_by(DATE) %>%
+  arrange(desc(DATE)) -> sm
+ 
+sm %>%
+  select(DATE, score) %>%
+  group_by(DATE = floor_date(DATE, frq)) %>%
+  summarise(Dnevni_sent = sum(score, na.rm = TRUE)) %>%
+  ggplot(., aes(DATE, Dnevni_sent)) +
+  geom_bar(stat = "identity") + 
+  ggtitle(paste0("Frequency:", frq)) +
+  ylab("SentimentScore") +
+  #make it black and white
+  theme_minimal() +
+  scale_x_datetime(
+      date_breaks = "week",  # Adjust the interval as needed
+      date_labels = "%Y-%m-%d",
+      expand = c(0, 0)
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )-> gg_sentiment_kroz_vrijeme_qv
+gg_sentiment_kroz_vrijeme_qv
+}
+vizualiziraj_sentiment(n_tokenTidy,"week")
+
+```
+
+
+
 
 ##### Doprinos riječi sentimentu (crosentilex)
 
