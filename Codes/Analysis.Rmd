@@ -428,6 +428,10 @@ vizualiziraj_sentiment(n_tokenTidy,"week")
 
 
 
+
+
+
+
 ##### Doprinos riječi sentimentu (crosentilex)
 
 ```{r echo=F, eval=T, message=F , warning= FALSE}
