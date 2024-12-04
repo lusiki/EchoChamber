@@ -11,7 +11,7 @@ library(ggplot2)
 
 
 
-file_list <- list.files(path = "C:/Users/lukas/Dropbox/Determ_mediaspace/2024", pattern = "*.xlsx", full.names = TRUE)
+file_list <- list.files(path = "C:/Users/lukas/Dropbox/Determ_mediaspace/2022", pattern = "*.xlsx", full.names = TRUE)
 
 
 # Function to read a single Excel file
