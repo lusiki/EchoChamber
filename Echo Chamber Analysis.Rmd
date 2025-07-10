@@ -1,0 +1,241 @@
+---
+title: "A Clash of Communities"
+author: "Lux"
+date: "2025-07-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This report analyzes political discourse on Croatian subreddits during the 2024 election period. Using network science and content analysis, we investigate the structure of user interactions to determine if they form isolated "echo chambers" or a more integrated, confrontational "public square." We hypothesize that the network is structurally polarized but, contrary to a simple echo chamber model, is characterized by high levels of cross-community engagement.
+
+
+```{r echo=F, eval=T, message=F , warning= F}
+# Core Data & Network Packages
+library(tidyverse)
+library(readxl)
+library(here)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+
+# Optional helper for string manipulation
+library(stringr)
+```
+
+## Part 1: Building and Analyzing the Network Structure
+
+The first step is to construct a network of user interactions. We define a connection (an "edge") between two authors if they post in the same thread. This creates a co-participation network, allowing us to map the overall structure of the conversation.
+
+
+###  1.1 Data Loading and Initial Cleaning
+
+We begin by loading the dataset of Reddit comments and performing an initial cleaning to remove irrelevant columns.
+
+```{r echo=F, eval=T, message=F , warning= F}
+# Load the dataset
+dta <- read_excel(here("Data", "komentari_final.xlsx"))
+
+# Select relevant columns and add a document ID
+dta <- dta %>%
+  select(
+    DATE, TIME, TITLE, FROM, AUTHOR, URL, 
+    AUTO_SENTIMENT, FULL_TEXT, matched_word
+  ) %>%
+  mutate(document = row_number())
+```
+
+
+
+### 1.2 User Data Validation and Network Construction
+
+To ensure a high-quality network of human interactions, we perform a critical data cleaning step. We filter out non-human actors (bots), deleted users, and malformed data (e.g., authors listed as URLs). This dta_cleaned object forms the basis for all subsequent analysis.
+
+
+```{r echo=F, eval=T, message=F , warning= F}
+# Filter for valid Reddit author names and remove bots/deleted users
+dta_cleaned <- dta %>%
+  filter(
+    !is.na(AUTHOR),
+    !str_detect(AUTHOR, "^http"),
+    str_detect(AUTHOR, "^[A-Za-z0-9_-]{3,20}$"),
+    AUTHOR != "[deleted]",
+    AUTHOR != "AutoModerator"
+  )
+
+cat("Original rows:", nrow(dta), "\n")
+cat("Rows after cleaning:", nrow(dta_cleaned), "\n\n")
+
+# --- Network Construction ---
+
+# 1. Create a unique ID for each thread
+df2 <- dta_cleaned %>%
+  mutate(thread_id = str_extract(URL, "(?<=comments/)[^/]+"))
+
+# 2. Identify unique authors participating in each thread
+threads2 <- df2 %>%
+  distinct(thread_id, AUTHOR) %>%
+  group_by(thread_id) %>%
+  filter(n() >= 2) %>%
+  summarize(authors = list(AUTHOR), .groups = "drop")
+
+# 3. Build a weighted edge list from author co-participation
+weighted_edge_list <- threads2 %>%
+  mutate(
+    pairs = map(authors, ~ {
+      m <- combn(.x, 2)
+      sorted_pairs_matrix <- t(apply(m, 2, sort))
+      tibble(from = sorted_pairs_matrix[, 1], to = sorted_pairs_matrix[, 2])
+    })
+  ) %>%
+  select(pairs) %>%
+  unnest(pairs) %>%
+  count(from, to, name = "weight")
+
+# 4. Create a weighted, undirected graph object
+g_weighted <- graph_from_data_frame(weighted_edge_list, directed = FALSE, vertices = NULL)
+```
+
+### 1.3 Measuring Structural Segregation
+
+We now analyze the network's structure to determine if it is fragmented. We use two key metrics:
+
+   Modularity (Q): Measures how well the network breaks down into dense communities. A score > 0.3 indicates significant community structure.
+
+  Assortativity (r): Measures the tendency of users to connect with others from their own primary subreddit. A positive score indicates homophily (in-group preference).
+
+
+```{r echo=F, eval=T, message=F , warning= F}
+# --- Community Detection ---
+comm_weighted <- cluster_louvain(g_weighted, weights = E(g_weighted)$weight)
+
+modularity_score <- modularity(comm_weighted)
+cat("The modularity of the network is:", round(modularity_score, 3), "\n")
+
+community_sizes <- sizes(comm_weighted)
+cat("Number of communities found:", length(community_sizes), "\n")
+cat("Top 5 largest communities (by number of members):\n")
+print(head(sort(community_sizes, decreasing = TRUE), 5))
+
+# --- Assortativity Analysis ---
+# Determine each author's "primary subreddit"
+author_subreddits <- dta_cleaned %>%
+  count(AUTHOR, FROM, name = "posts_in_sub") %>%
+  group_by(AUTHOR) %>%
+  filter(posts_in_sub == max(posts_in_sub)) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(AUTHOR, primary_subreddit = FROM)
+
+# Add subreddit as a vertex attribute
+V(g_weighted)$subreddit <- author_subreddits$primary_subreddit[
+  match(V(g_weighted)$name, author_subreddits$AUTHOR)
+]
+
+# Calculate assortativity coefficient
+assortativity_score <- assortativity_nominal(
+  g_weighted,
+  as.factor(V(g_weighted)$subreddit),
+  directed = FALSE
+)
+
+cat("\nAssortativity coefficient (r) for subreddit homophily:", round(assortativity_score, 3), "\n")
+
+# --- Displaying Community-Subreddit Alignment ---
+community_subreddit_table <- table(
+  `Louvain Community` = membership(comm_weighted),
+  `Primary Subreddit` = V(g_weighted)$subreddit
+)
+
+community_summary_df <- as.data.frame.matrix(community_subreddit_table) %>%
+  tibble::rownames_to_column(var = "Louvain_Community") %>%
+  tidyr::pivot_longer(
+    cols = -Louvain_Community,
+    names_to = "Primary_Subreddit",
+    values_to = "Member_Count"
+  ) %>%
+  filter(Member_Count > 0)
+
+top_5_community_ids <- names(head(sort(community_sizes, decreasing = TRUE), 5))
+
+top_communities_summary <- community_summary_df %>%
+  filter(Louvain_Community %in% top_5_community_ids) %>%
+  arrange(as.integer(Louvain_Community), desc(Member_Count))
+
+cat("\n--- Subreddit Composition of the Top 5 Largest Communities ---\n")
+print(knitr::kable(top_communities_summary, caption = "Alignment of structural communities with subreddits."))
+```
+
+
+
+Structural Analysis Conclusion: The network exhibits a polarized structure. A high Modularity (Q ≈ 0.41) shows it is clearly fragmented into distinct communities. The positive Assortativity (r ≈ 0.28) confirms that these communities have a significant tendency to align with subreddit boundaries, indicating homophilous, in-group interaction patterns.
+
+
+## Part 2: Characterizing the Communities
+
+Having established that distinct communities exist, we now analyze their content to understand their "personality." Do these different groups discuss the same topics? Do they have different emotional tones?
+
+### 2.1 Sentiment and Keyword Analysis
+
+We analyze the sentiment (positive, negative, neutral) and the most frequent keywords within the largest communities to identify differences in emotional tone and topical focus.
+
+```{r echo=F, eval=T, message=F , warning= F}
+# Add community membership back to the original data for content analysis
+membership_df <- tibble(
+  AUTHOR = V(g_weighted)$name,
+  community = as.integer(membership(comm_weighted))
+)
+
+dta_with_communities <- dta_cleaned %>%
+  left_join(membership_df, by = "AUTHOR") %>%
+  filter(!is.na(community))
+
+# --- 1. Sentiment Analysis per Community ---
+sentiment_by_community <- dta_with_communities %>%
+  group_by(community) %>%
+  count(AUTO_SENTIMENT) %>%
+  mutate(proportion = round(n / sum(n), 3)) %>%
+  filter(community %in% top_5_community_ids) # Focus on top 5
+
+cat("\n--- Sentiment Profile of Top 5 Communities ---\n")
+print(knitr::kable(sentiment_by_community, caption = "Proportion of comment sentiment by community."))
+
+# --- 2. Keyword Analysis per Community ---
+keywords_by_community <- dta_with_communities %>%
+  mutate(keyword = str_split(matched_word, ", ")) %>%
+  unnest(keyword) %>%
+  filter(keyword != "NA" & keyword != "") %>%
+  group_by(community) %>%
+  count(keyword, sort = TRUE)
+
+top_keywords <- keywords_by_community %>%
+  group_by(community) %>%
+  top_n(5, n) %>%
+  filter(community %in% top_5_community_ids) %>%
+  arrange(as.integer(community), desc(n))
+
+cat("\n--- Top Keywords of Top 5 Communities ---\n")
+print(knitr::kable(top_keywords, caption = "Most frequent keywords by community.")
+```
+
+Community Characterization Conclusion: While all major communities focus on the same core electoral topics, their emotional characters differ. Some communities exhibit a significantly higher proportion of negative sentiment, suggesting they act as reservoirs of criticism and dissatisfaction. This indicates that while the topics are shared, the framing and emotional reaction are distinct within each group.
+
+
+
+## Part 3: Analyzing Cross-Community Bridges
+
+The final step is to analyze the connections between these communities. The Participation Coefficient (P) measures how distributed a user's interactions are. A user with P ≈ 0 is a "local" (within one community), while a user with P > 0.5 is a "bridge" (connecting multiple communities).
+
+### 3.1 Calculating and Profiling Bridge Users
+
+We calculate P for every user in the network to understand the overall level of cross-community interaction and to identify the key individuals who bridge the divides.
+
+
+
+
+
+

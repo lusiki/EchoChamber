@@ -49,7 +49,45 @@ dta <- read_excel(here("Data", "komentari_final.xlsx"))
 
 
 dta <- dta %>%
-  mutate(document = row_number())
+  mutate(document = row_number()) %>%
+  select(
+    -c(
+      URL_PHOTO,
+      SOURCE_TYPE,
+      GROUP_NAME,
+      KEYWORD_NAME,
+      FOUND_KEYWORDS,
+      LANGUAGES,
+      LOCATIONS,
+      TAGS,
+      MANUAL_SENTIMENT,
+      REACH,
+      VIRALITY,
+      ENGAGEMENT_RATE,
+      INTERACTIONS,
+      FOLLOWERS_COUNT,
+      LIKE_COUNT,
+      COMMENT_COUNT,
+      SHARE_COUNT,
+      TWEET_COUNT,
+      LOVE_COUNT,
+      WOW_COUNT,
+      HAHA_COUNT,
+      SAD_COUNT,
+      ANGRY_COUNT,
+      TOTAL_REACTIONS_COUNT,
+      FAVORITE_COUNT,
+      RETWEET_COUNT,
+      VIEW_COUNT,
+      DISLIKE_COUNT,
+      COUNT,
+      REPOST_COUNT,
+      INFLUENCE_SCORE,
+      TWEET_TYPE,
+      TWEET_SOURCE_NAME,
+      TWEET_SOURCE_URL
+    )
+  )
 ```
 
 
@@ -421,14 +459,44 @@ tidy_text_  %>%
   ungroup() -> tidy_text_
 
 
+
+# change the name of the column word into word_ and stemmed_word into word
+
+
+```
+
+
+#### Učitaj podatke
+
+```{r}
+
+
+# Load necessary libraries
+tidy_text_ <- openxlsx::read.xlsx("stemmed_titles_reddit.xlsx")
+
+tidy_text_ <- tidy_text_ %>%
+  rename(
+    word_ = word,
+    word = stemmed_word
+  )
+
+# change date column to Date type
+
+tidy_text_$DATE <- as.Date(tidy_text_$DATE, format = "%Y-%m-%d",origin = "1899-12-30")
+
+
+
 ```
 
 
 #### Najčešće riječi (title)
 
 ```{r echo=F, eval=T, message=F , warning= FALSE}
+
+
+
 tidy_text_ %>%
-  group_by(stemmed_word, all_words) %>%
+  group_by(word, all_words) %>%
   summarise(count = n()) %>%
   mutate(percent = round(count / sum(count) * 100,2)) %>% 
   arrange(desc(count)) %>%
@@ -443,8 +511,8 @@ tidy_text_ %>%
 ### Word frequency (txt)
 
 ```{r echo=F, eval=T, message=F , warning= FALSE}
-n_tokenTidy %>%
-  group_by(word) %>%
+tidy_text_ %>%
+  group_by(word, all_words) %>%
   summarise(count = n()) %>%
   mutate(percent = round(count / sum(count) * 100,2)) %>% 
   arrange(desc(count)) %>%
@@ -731,14 +799,14 @@ dataset %>%
  gg_doprinos_sentimentu
  
 }
-doprinos_sentimentu_full(n_tokenTidy,20)
+doprinos_sentimentu_full(tidy_text_,20)
 ```
 
 #### Oblak riječi sa sentimentom CroSentilex
 
 ```{r echo=F, eval=T, message=F , warning= FALSE}
 ## ComparisonCloud
-n_tokenTidy %>%
+tidy_text_ %>%
   inner_join(CroSentilex_Gold,by="word") %>% 
   count(word, sentiment) %>% 
   top_n(200) %>%
@@ -755,7 +823,7 @@ n_tokenTidy %>%
 
 
 ```{r echo=F, eval=T, message=F , warning= FALSE}
-n_tokenTidy %>%
+tidy_text_ %>%
   inner_join(NRCpn,by="word") %>% 
   count(word, Emotion) %>% 
   top_n(200) %>%
@@ -772,12 +840,12 @@ n_tokenTidy %>%
 
 ```{r echo=F, eval=T, message=F , warning= FALSE}
 ## Negative profiles
-wCount <- n_tokenTidy %>% 
+wCount <- tidy_text_ %>% 
   group_by(FROM) %>%
   summarise(word = n())
 CroSentilex_Gold_neg <- CroSentilex_Gold %>% filter(sentiment == 1)
 CroSentilex_Gold_poz <- CroSentilex_Gold %>% filter(sentiment == 2)
-n_tokenTidy %>% 
+tidy_text_ %>% 
   semi_join(CroSentilex_Gold_neg, by= "word") %>%
   group_by(FROM) %>% 
   summarise(negWords = n()) %>%
@@ -791,7 +859,7 @@ n_tokenTidy %>%
 ```{r echo=F, eval=T, message=F , warning= FALSE}
 ## Najpozitivniji portali
 CroSentilex_Gold_poz <- CroSentilex_Gold %>% filter(sentiment == 2)
-n_tokenTidy %>% 
+tidy_text_ %>% 
   semi_join(CroSentilex_Gold_poz, by= "word") %>%
   group_by(FROM) %>% 
   summarise(pozWords = n()) %>%
@@ -806,7 +874,7 @@ n_tokenTidy %>%
 
 ```{r frekvencija, eval = F, echo = F, message=F, warning=F, fig.height=10, fig.width=12}
 ## Udio riječi po domenama
-domenaWords <- n_tokenTidy %>%
+domenaWords <- tidy_text_ %>%
   count(FROM, word, sort = T)
   
 ukupnoWords <- domenaWords %>%
@@ -919,7 +987,7 @@ bigrams_united %>%
 
 ```{r eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
 
-dtm <- n_tokenTidy %>%
+dtm <- tidy_text_ %>%
   count(document, word) %>%
   cast_dtm(document, word, n)
 
@@ -1019,13 +1087,13 @@ target_words <- c("hdz", "sdp", "dp", "parlament", "izbori", "problem", "glas", 
 #
 
 # Filter for more frequent words to reduce dimensionality
-frequent_words <- n_tokenTidy %>%
+frequent_words <- tidy_text_ %>%
   count(word) %>%
   filter(n >= 25) %>%
   pull(word)
 
 # Filter the original tidy text data to include only frequent words
-n_tokenTidy_filtered <- n_tokenTidy %>%
+n_tokenTidy_filtered <- tidy_text_ %>%
   filter(word %in% frequent_words)
 
 # Find co-occurring words with the target words
@@ -1091,7 +1159,7 @@ co_occurrences %>%
 
 ```{r komm, eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15}
 
-word_cors <- n_tokenTidy %>%
+word_cors <- tidy_text_ %>%
    group_by(word) %>%
    filter(n() >= 20) %>%
    pairwise_cor(word, document, sort = TRUE)
@@ -1149,7 +1217,7 @@ word_cors <- n_tokenTidy %>%
 word_cors %>%
   filter(item1 %in% c("hdz", "sdp", "dp", "parlament","izbori", "problem", "glas", "stranka", "možemo")) %>%
   group_by(item1) %>%
-  slice_max(correlation, n = 10) %>%
+  slice_max(correlation, n = 15) %>%
   ungroup() %>%
   mutate(item2 = reorder(item2, correlation)) %>%
   ggplot(aes(item2, correlation)) +
@@ -1183,7 +1251,7 @@ word_cors %>%
 
 ```{r komm3, eval = T, echo = F, message=F, warning=F, fig.height=15, fig.width=15} 
 
-wcs <- n_tokenTidy %>%
+wcs <- tidy_text_ %>%
   group_by(word, DATE) %>%
   filter(n() >= 40) %>%
   ungroup() %>%
@@ -1218,7 +1286,7 @@ library(lubridate)
  # for pairwise_cor function
 
 # Convert date to the start of the week and then calculate correlations by week
-wcs <- n_tokenTidy %>%
+wcs <- tidy_text_ %>%
   mutate(week = floor_date(DATE, unit = "week")) %>%
   group_by(word, week) %>%
   filter(n() >= 20) %>%

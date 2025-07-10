@@ -1,0 +1,1002 @@
+---
+title: "Untitled"
+author: "Lux"
+date: "2025-07-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Data cleaning & reshaping
+
+
+
+```{r }
+library(tidyverse)
+library(lubridate)
+library(tidytext)
+library(topicmodels)
+#library(text2vec)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(uwot)
+library(slider)
+library(readxl)
+library(openxlsx)
+library(here)
+
+```
+
+```{r ch1, echo=F, eval=T, message=F , warning= FALSE}
+# Load data from Data folder
+
+dta <- read_excel(here("Data", "komentari_final.xlsx"))
+
+
+dta <- dta %>%
+  mutate(document = row_number()) %>%
+  select(
+    -c(
+      URL_PHOTO,
+      SOURCE_TYPE,
+      GROUP_NAME,
+      KEYWORD_NAME,
+      FOUND_KEYWORDS,
+      LANGUAGES,
+      LOCATIONS,
+      TAGS,
+      MANUAL_SENTIMENT,
+      REACH,
+      VIRALITY,
+      ENGAGEMENT_RATE,
+      INTERACTIONS,
+      FOLLOWERS_COUNT,
+      LIKE_COUNT,
+      COMMENT_COUNT,
+      SHARE_COUNT,
+      TWEET_COUNT,
+      LOVE_COUNT,
+      WOW_COUNT,
+      HAHA_COUNT,
+      SAD_COUNT,
+      ANGRY_COUNT,
+      TOTAL_REACTIONS_COUNT,
+      FAVORITE_COUNT,
+      RETWEET_COUNT,
+      VIEW_COUNT,
+      DISLIKE_COUNT,
+      COUNT,
+      REPOST_COUNT,
+      INFLUENCE_SCORE,
+      TWEET_TYPE,
+      TWEET_SOURCE_NAME,
+      TWEET_SOURCE_URL
+    )
+  )
+
+```
+
+
+## Network & Structural Analysis (Homophily & Segregation)
+
+# —————— STAGE 1: DATA CLEANING (THE CRITICAL NEW STEP) ——————
+
+
+```{r}
+    
+# 1. Identify valid author names. Reddit author names must be between 3 and 20 characters
+#    and can only contain letters, numbers, hyphens, and underscores.
+#    A simple regex for this is "^[A-Za-z0-9_-]{3,20}$".
+#    Also, filter out known bot names if you have a list.
+#    Most importantly, filter out NA and any value that looks like a URL.
+dta_cleaned <- dta %>%
+  filter(
+    !is.na(AUTHOR),                                  # Remove rows where author is NA
+    !str_detect(AUTHOR, "^http"),                    # Remove rows where author is a URL
+    str_detect(AUTHOR, "^[A-Za-z0-9_-]{3,20}$"),      # Keep only valid-looking usernames
+    AUTHOR != "[deleted]",                           # Remove deleted users
+    AUTHOR != "AutoModerator"                        # Remove common bots
+    # Add any other bot names you know of here, e.g., !AUTHOR %in% c("bot1", "bot2")
+  )
+
+# Check how many rows were removed
+cat("Original rows:", nrow(dta), "\n")
+cat("Rows after cleaning:", nrow(dta_cleaned), "\n")
+```
+
+
+# —————— STAGE 2: NETWORK CONSTRUCTION (USING THE CLEANED DATA) ——————
+
+```{r}
+
+# Now, we use the `dta_cleaned` object for the rest of the analysis.
+
+# 1. Create thread IDs
+df2 <- dta_cleaned %>%
+  mutate(
+    thread_id = str_extract(URL, "(?<=comments/)[^/]+")
+  )
+
+# 2. Get unique authors per thread
+threads2 <- df2 %>%
+  distinct(thread_id, AUTHOR) %>%
+  group_by(thread_id) %>%
+  filter(n() >= 2) %>%
+  summarize(authors = list(AUTHOR), .groups = "drop")
+
+# 3. Build the weighted edge list (you can now use the simpler, more elegant code)
+weighted_edge_list <- threads2 %>%
+  mutate(
+    pairs = map(authors, ~ {
+      # This simple version should now be safe with clean data
+      m <- combn(.x, 2)
+      sorted_pairs_matrix <- t(apply(m, 2, sort))
+      tibble(
+        from = sorted_pairs_matrix[, 1],
+        to   = sorted_pairs_matrix[, 2]
+      )
+    })
+  ) %>%
+  select(pairs) %>%
+  unnest(pairs) %>%
+  count(from, to, name = "weight")
+
+```
+
+# —————— STAGE 3: ANALYSIS ——————
+
+```{r}
+
+# 4. Create the graph
+g_weighted <- graph_from_data_frame(weighted_edge_list, directed = FALSE)
+
+# 5. Run community detection
+comm_weighted <- cluster_louvain(g_weighted, weights = E(g_weighted)$weight)
+
+# 6. Proceed with your analysis...
+modularity_score <- modularity(comm_weighted)
+cat("The modularity of the network is:", modularity_score, "\n")
+
+
+# Also, let's see how many communities were found and their sizes
+community_sizes <- sizes(comm_weighted)
+cat("Number of communities found:", length(community_sizes), "\n")
+print("Top 10 largest communities (size):")
+print(head(sort(community_sizes, decreasing = TRUE), 50))
+
+```
+
+
+```{r}
+# ——— First, create an attribute table for each author ———
+# We determine each author's "primary subreddit" based on where they post most.
+author_subreddits <- dta_cleaned %>%
+  count(AUTHOR, FROM, name = "posts_in_sub") %>%
+  group_by(AUTHOR) %>%
+  filter(posts_in_sub == max(posts_in_sub)) %>%
+  slice(1) %>% # Take the first one in case of a tie
+  ungroup() %>%
+  select(AUTHOR, primary_subreddit = FROM)
+
+# ——— Second, add these attributes to our network graph ———
+# V(g_weighted) gives us access to the vertices (nodes/authors) of the graph
+V(g_weighted)$subreddit <- author_subreddits$primary_subreddit[
+  match(V(g_weighted)$name, author_subreddits$AUTHOR)
+]
+
+# ——— Third, create a cross-tabulation to see the overlap ———
+# This table is the key result. It shows how many members of each Louvain community
+# come from each primary subreddit.
+community_subreddit_table <- table(
+  `Louvain Community` = membership(comm_weighted),
+  `Primary Subreddit` = V(g_weighted)$subreddit
+)
+
+# cat("\n--- Community vs. Subreddit Alignment ---\n")
+# print(community_subreddit_table)
+
+community_summary_df <- as.data.frame.matrix(community_subreddit_table) %>%
+  tibble::rownames_to_column(var = "Louvain_Community") %>%
+  # Gather the data into a long format for easier summarizing
+  tidyr::pivot_longer(
+    cols = -Louvain_Community,
+    names_to = "Primary_Subreddit",
+    values_to = "Member_Count"
+  ) %>%
+  filter(Member_Count > 0) # Keep only combinations that actually exist
+
+# Now, let's create a "Top 5" summary table
+top_5_communities <- head(sort(community_sizes, decreasing = TRUE), 5)
+top_5_community_ids <- names(top_5_communities)
+
+# Filter the summary to show the subreddit composition of ONLY the top 5 largest communities
+top_communities_summary <- community_summary_df %>%
+  filter(Louvain_Community %in% top_5_community_ids) %>%
+  # Arrange for readability
+  arrange(Louvain_Community, desc(Member_Count))
+
+cat("--- Subreddit Composition of the Top 5 Largest Communities ---\n")
+print(top_communities_summary, n = Inf) # Print all rows of this summary
+
+
+
+
+
+
+
+
+
+
+
+# ——— Fourth, calculate the formal statistical proof: Assortativity ———
+# This gives a single 'r' value for how strongly nodes connect to similar nodes.
+assortativity_score <- assortativity_nominal(
+  g_weighted,
+  as.factor(V(g_weighted)$subreddit),
+  directed = FALSE
+)
+
+cat("\nAssortativity coefficient (r) for subreddit homophily:", assortativity_score, "\n")
+```
+
+
+
+
+
+```{r}
+# Create a dataframe of authors and their assigned community
+membership_df <- tibble(
+  AUTHOR = V(g_weighted)$name,
+  community = as.integer(membership(comm_weighted))
+)
+
+# Join this community data back to your main cleaned data
+dta_with_communities <- dta_cleaned %>%
+  left_join(membership_df, by = "AUTHOR") %>%
+  filter(!is.na(community)) # Keep only posts from authors in the network
+
+# ——— Now, analyze the character of each community ———
+
+# 1. Sentiment Analysis per Community
+sentiment_by_community <- dta_with_communities %>%
+  group_by(community) %>%
+  count(AUTO_SENTIMENT) %>%
+  mutate(proportion = n / sum(n))
+
+cat("\n--- Sentiment Profile by Community ---\n")
+print(sentiment_by_community)
+
+
+# 2. Keyword/Topic Analysis per Community
+# Unnest the `matched_word` column and find the top keywords per community
+# Note: Requires the 'stringr' package for str_split
+library(stringr)
+
+keywords_by_community <- dta_with_communities %>%
+  mutate(keyword = str_split(matched_word, ", ")) %>%
+  unnest(keyword) %>%
+  filter(keyword != "NA") %>%
+  group_by(community) %>%
+  count(keyword, sort = TRUE)
+
+cat("\n--- Top Keywords by Community ---\n")
+# Print the top 10 for each community
+keywords_by_community %>%
+  group_by(community) %>%
+  top_n(10, n) %>%
+  print(n = Inf) %>%
+  arrange(community, desc(n))
+```
+
+
+
+
+
+
+```{r}
+# Create a dataframe of authors and their assigned community
+membership_df <- tibble(
+  AUTHOR = V(g_weighted)$name,
+  community = as.integer(membership(comm_weighted))
+)
+
+# Join this community data back to your main cleaned data
+dta_with_communities <- dta_cleaned %>%
+  left_join(membership_df, by = "AUTHOR") %>%
+  filter(!is.na(community)) # Keep only posts from authors in the network
+
+# ——— Now, analyze the character of each community ———
+
+# 1. Sentiment Analysis per Community
+sentiment_by_community <- dta_with_communities %>%
+  group_by(community) %>%
+  count(AUTO_SENTIMENT) %>%
+  mutate(proportion = n / sum(n))
+
+cat("\n--- Sentiment Profile by Community ---\n")
+print(sentiment_by_community)
+
+
+# 2. Keyword/Topic Analysis per Community
+# Unnest the `matched_word` column and find the top keywords per community
+# Note: Requires the 'stringr' package for str_split
+library(stringr)
+
+keywords_by_community <- dta_with_communities %>%
+  mutate(keyword = str_split(matched_word, ", ")) %>%
+  unnest(keyword) %>%
+  filter(keyword != "NA") %>%
+  group_by(community) %>%
+  count(keyword, sort = TRUE)
+
+cat("\n--- Top Keywords by Community ---\n")
+# Print the top 10 for each community
+keywords_by_community %>%
+  group_by(community) %>%
+  top_n(10, n) %>%
+  print(n = Inf)
+```
+
+
+
+
+## Bridges
+```{r}
+# Assuming you have already calculated `connector_df` which should contain
+# the participation coefficient 'P' for each node.
+# Let's recreate it here for clarity. First, ensure you have the community membership.
+V(g_weighted)$community <- membership(comm_weighted)
+
+# Now, calculate P for each node. This requires a bit of manual calculation.
+# The 'netrankr' package has a function, but we can do it manually for clarity.
+
+# Create a dataframe of edges with community info for both ends
+edge_df_comm <- as_data_frame(g_weighted, what = "edges") %>%
+  left_join(tibble(from_comm = V(g_weighted)$community, from_name = V(g_weighted)$name), by = c("from" = "from_name")) %>%
+  left_join(tibble(to_comm = V(g_weighted)$community, to_name = V(g_weighted)$name), by = c("to" = "to_name"))
+
+# Calculate Ki_s: number of links of node i to nodes in community s
+calc_participation <- function(node_name, node_community) {
+  # Get all edges involving this node
+  node_edges <- edge_df_comm %>% filter(from == node_name | to == node_name)
+  if (nrow(node_edges) == 0) return(0)
+
+  # Calculate degree (Ki)
+  Ki <- nrow(node_edges)
+  
+  # Calculate Ki_s for each community the node connects to
+  # This part is a bit tricky, we need to find the community of the 'other' node in each edge
+  other_communities <- c(
+    node_edges$to_comm[node_edges$from == node_name],
+    node_edges$from_comm[node_edges$to == node_name]
+  )
+  
+  kis_sq_sum <- other_communities %>%
+    tibble(comm = .) %>%
+    count(comm) %>%
+    mutate(kis_sq = (n / Ki)^2) %>%
+    summarize(sum_val = sum(kis_sq)) %>%
+    pull(sum_val)
+    
+  P <- 1 - kis_sq_sum
+  return(P)
+}
+
+# Apply this to every node in the graph (can be slow on large graphs)
+all_nodes <- V(g_weighted)$name
+all_communities <- V(g_weighted)$community
+participation_coeffs <- map2_dbl(all_nodes, all_communities, calc_participation)
+
+# Create the final connector_df
+connector_df <- tibble(
+  node = all_nodes,
+  P = participation_coeffs,
+  degree = degree(g_weighted)
+)
+
+# --- NOW, THE ANALYSIS ---
+
+# Get a summary of the P distribution
+cat("--- Summary of Participation Coefficient (P) ---\n")
+summary(connector_df$P)
+
+# Visualize the distribution
+library(ggplot2)
+ggplot(connector_df, aes(x = P)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") +
+  geom_vline(xintercept = 0.5, color = "red", linetype = "dashed") +
+  labs(
+    title = "Distribution of Bridge Scores (Participation Coefficient)",
+    subtitle = "Vast majority of nodes have P near 0, indicating few bridges",
+    x = "Participation Coefficient (P)",
+    y = "Number of Users"
+  ) +
+  theme_minimal()
+
+
+
+
+
+
+top_10_bridges <- connector_df %>%
+  arrange(desc(P)) %>%
+  head(10)
+
+cat("\n--- Profile of Top 10 Bridge Users ---\n")
+print(top_10_bridges)
+
+# Bonus: What is the primary subreddit of these bridge users?
+# This tells you which communities are "exporting" brokers.
+top_bridges_with_sub <- top_10_bridges %>%
+  left_join(author_subreddits, by = c("node" = "AUTHOR"))
+
+cat("\n--- Subreddit Affiliation of Top 10 Bridges ---\n")
+print(top_bridges_with_sub)
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# --- Create a quanteda-style Network Plot (Final, Robust Version) ---
+
+# 1. (Same as before) Convert igraph to FCM
+adjacency_matrix <- as_adjacency_matrix(g_weighted, attr = "weight", sparse = TRUE)
+user_fcm <- quanteda::as.fcm(adjacency_matrix)
+
+# 2. --- THE DEFINITIVE FIX: Identify Top Users with igraph ---
+#    First, we calculate the "strength" of each node. In a weighted graph, this
+#    is the sum of the weights of all its connections (i.e., total co-participations).
+#    This is the best measure of a user's overall centrality in the network.
+node_strengths <- strength(g_weighted)
+
+#    Next, we create a dataframe to rank users by their strength.
+strength_df <- tibble(
+  node = V(g_weighted)$name,
+  strength = node_strengths
+) %>%
+  arrange(desc(strength))
+
+#    Now, we explicitly get the names of the top 200 most central users.
+top_user_names <- head(strength_df$node, 15) # Adjust N here (e.g., 100, 200, 300)
+
+#    Finally, we prune the FCM by selecting ONLY these top users by name.
+#    This is an unambiguous operation that will work correctly.
+fcm_pruned <- fcm_select(user_fcm, pattern = top_user_names)
+
+
+# 3. (Same as before) Prepare vectors for sizing and coloring for the PRUNED FCM.
+user_activity <- dta_cleaned %>% count(AUTHOR, name = "total_posts")
+fcm_users <- featnames(fcm_pruned)
+
+label_sizes <- user_activity$total_posts[match(fcm_users, user_activity$AUTHOR)]
+label_sizes[is.na(label_sizes)] <- 1
+label_sizes <- log(label_sizes + 1) * 1.5
+
+user_subreddits <- V(g_weighted)$subreddit[match(fcm_users, V(g_weighted)$name)]
+vertex_colors <- case_when(
+  user_subreddits == "croatia"    ~ "#1b9e77",
+  user_subreddits == "hrvatska"  ~ "#d95f02",
+  user_subreddits == "askcroatia" ~ "#7570b3",
+  TRUE                          ~ "grey50"
+)
+
+# 4. Create the plot using the now correctly pruned FCM.
+#    This will now work because fcm_pruned is guaranteed to contain non-zero values.
+quanteda.textplots::textplot_network(
+    x = fcm_pruned,
+    min_freq = 1, # Start with 1, increase if the plot is still too dense
+    edge_alpha = 0.2,
+    edge_color = "grey60",
+    vertex_labelsize = label_sizes,
+    vertex_color = vertex_colors,
+    vertex_size = 2.5
+)
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+# --- Step 1: Prepare the Data in the Tutorial's Format (va and ed) ---
+
+# First, we must select the core of the network to make it plottable.
+# We'll select the top 150 users based on their "strength" (total co-participation frequency).
+n_top_users <- 20 # You can adjust this number (e.g., 100, 200)
+
+# Identify the names of the top N users
+node_strengths <- strength(g_weighted)
+strength_df <- tibble(node = V(g_weighted)$name, strength = node_strengths) %>%
+  arrange(desc(strength))
+top_user_names <- head(strength_df$node, n_top_users)
+
+# --- Create 'va' (Vertex Attributes) for the top users ---
+# We need node name, a size metric 'n', and a type 'type' for color.
+
+# a) Get total post count for each user (for node & label size)
+user_activity <- dta_cleaned %>% count(AUTHOR, name = "n")
+
+# b) Create the final 'va' dataframe for ONLY the top users
+va <- author_subreddits %>%
+  filter(AUTHOR %in% top_user_names) %>%
+  left_join(user_activity, by = "AUTHOR") %>%
+  # Rename columns to match the tutorial's expected names
+  rename(node = AUTHOR, type = primary_subreddit) %>%
+  # Handle any users who might not have activity data (rare)
+  mutate(n = replace_na(n, 1))
+
+# --- Create 'ed' (Edge Data) for connections ONLY between top users ---
+ed <- weighted_edge_list %>%
+  filter(from %in% top_user_names & to %in% top_user_names) %>%
+  # Rename column to match the tutorial's expected name 'n'
+  rename(n = weight)
+
+
+# --- Step 2: Build and Plot the Graph using the Tutorial's Code ---
+
+# Create the igraph and tidygraph objects from our prepared 'ed' and 'va' tables
+ig <- igraph::graph_from_data_frame(d = ed, vertices = va, directed = FALSE)
+tg <- tidygraph::as_tbl_graph(ig)
+
+# Set a seed for a reproducible layout
+set.seed(12345)
+
+# Create the plot using the adapted ggraph code
+ggraph(tg, layout = "fr") +
+
+  # Draw edges: thickness and alpha are mapped to 'n' (the weight from our edge list)
+  geom_edge_arc(
+      colour = "lightgray",
+      lineend = "round",
+      strength = 0.1,
+      aes(edge_width = n, alpha = n)
+  ) +
+
+  # Draw nodes: size is mapped to 'n' (total posts), color is mapped to 'type' (subreddit)
+  geom_node_point(aes(size = n, color = type)) +
+
+  # Draw node labels: size is also mapped to 'n'
+  geom_node_text(
+      aes(label = name, size = n),
+      repel = TRUE, # Prevents labels from overlapping
+      point.padding = unit(0.2, "lines"),
+      colour = "gray10"
+  ) +
+
+  # --- Aesthestic Adjustments ---
+
+  # Define the ranges for size and transparency
+  scale_size_continuous(range = c(1, 10), name = "User Activity (Total Posts)") +
+  scale_edge_width(range = c(0.1, 3)) +
+  scale_edge_alpha(range = c(0.1, 0.4)) +
+
+  # Use a color palette suitable for many categories
+  scale_color_viridis_d(option = "cividis", name = "Primary Subreddit") +
+
+  theme_graph(base_family = "sans", background = "white") +
+  theme(legend.position = "right") +
+
+  # Hide the edge-related legends for a cleaner look
+  guides(edge_width = "none", edge_alpha = "none")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# 1. Decompose the graph into its separate components (islands)
+components <- decompose(g)
+
+# 2. Find the largest component
+largest_component <- components[[which.max(sapply(components, vcount))]]
+
+# 3. Rerun the community detection ONLY on this main component
+louvain_main <- cluster_louvain(largest_component)
+
+# 4. Now plot just the largest component, colored by its communities
+plot(
+  largest_component,
+  vertex.color = membership(louvain_main),
+  vertex.label = NA,
+  vertex.size = 5,
+  layout = layout_with_fr(largest_component)
+)
+
+
+modularity_main_group <- modularity(louvain_main)
+
+
+
+```
+
+
+
+
+
+
+```{r}
+ggplot(top_communities_summary, aes(x = Louvain_Community, y = Member_Count, fill = Primary_Subreddit)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal(base_family = "sans") +
+  
+  # --- THE FIX IS HERE ---
+  # Switch from scale_fill_brewer to scale_fill_viridis_d (d for 'discrete')
+  # This palette can handle any number of categories gracefully.
+  scale_fill_viridis_d(option = "cividis", name = "Primary Subreddit") +
+  
+  labs(
+    title = "Subreddit Composition of the Largest Network Communities",
+    subtitle = "Each structural community is dominated by a single subreddit.",
+    x = "Louvain-Detected Community ID",
+    y = "Number of Members"
+  ) +
+  theme(legend.position = "bottom")
+
+
+
+ggplot(sentiment_by_community, aes(x = community, y = proportion, fill = AUTO_SENTIMENT)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(
+    values = c("negative" = "#d95f02", "neutral" = "#7570b3", "positive" = "#1b9e77"),
+    name = "Sentiment"
+  ) +
+  theme_minimal(base_family = "sans") +
+  labs(
+    title = "Emotional Signature of Top Network Communities",
+    subtitle = "Communities exhibit distinct emotional profiles, with some being significantly more negative.",
+    x = "Louvain-Detected Community ID",
+    y = "Proportion of Comments"
+  ) +
+  coord_flip() # Flip coordinates for better readability of community IDs
+
+
+# --- Visualize the Network Colored by Community ---
+
+# First, create the 'tg' (tidygraph) object from your main graph 'g_weighted'.
+# We also add the community ID as a new attribute to the nodes, which we will use for coloring.
+tg <- as_tbl_graph(g_weighted) %>%
+  activate(nodes) %>% # This tells tidygraph we are modifying the node data
+  mutate(community = as.factor(membership(comm_weighted)))
+
+# Now that 'tg' exists, we can use it to create the plot.
+ggraph(tg, layout = "fr") +
+  geom_edge_link(alpha = 0.1, colour = "grey70", width = 0.2) +
+  # Color nodes by the 'community' attribute we just created
+  geom_node_point(aes(color = community), size = 1.5) +
+  scale_color_viridis_d(option = "magma", name = "Community ID") +
+  theme_graph(base_family = "sans") +
+  theme(legend.position = "none") + # Hide legend for a cleaner look
+  labs(
+    title = "Network Structure of Croatian Reddit",
+    subtitle = "Nodes colored by their detected community, revealing a polarized structure."
+  )
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# NOT INVLUDED
+
+
+```{r}
+
+dta <- dta %>%
+  mutate(
+    AUTO_SENTIMENT = case_when(
+      AUTO_SENTIMENT == "neutral" ~ "neutral",
+      AUTO_SENTIMENT == "positive" ~ "positive",
+      AUTO_SENTIMENT == "negative" ~ "negative",
+      TRUE ~ NA_character_  # catch any other cases
+    )
+  ) %>%
+  filter(!is.na(AUTO_SENTIMENT))  # remove any rows with NA sentiment
+
+unique_sent <- dta %>%
+     pull(AUTO_SENTIMENT) %>%
+     unique()
+
+
+author_sent <- dta %>%
+  filter(!is.na(AUTO_SENTIMENT)) %>%
+  group_by(AUTHOR, AUTO_SENTIMENT) %>%
+  summarise(count = n(), .groups="drop") %>%
+  group_by(AUTHOR) %>%
+  slice_max(count, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  rename(sentiment = AUTO_SENTIMENT)
+
+
+author_sent%>%
+     pull(sentiment) %>%
+     unique()
+
+
+# 2. Attach that label to the graph, then drop any unlabeled authors
+V(g)$sentiment <- author_sent$sentiment[
+  match(V(g)$name, author_sent$AUTHOR)
+]
+g2 <- delete_vertices(g, V(g)[ is.na(V(g)$sentiment) ])  
+# Now every vertex in g2 has a non‐NA sentiment
+
+# 3. Map sentiment strings to integer codes explicitly
+#    (avoids any factor–+1/–1 pitfalls)
+sent_numeric <- recode(
+  V(g2)$sentiment,
+  negative = 2L,
+  neutral  = 4L,
+  positive = 6L,
+  .default  = NA_integer_
+)
+
+# 4. (Just in case) drop any vertices where recode failed
+bad <- which(is.na(sent_numeric))
+if(length(bad) > 0) {
+  g2 <- delete_vertices(g2, V(g2)[bad])
+  sent_numeric <- sent_numeric[-bad]
+}
+
+# 5. Compute the assortativity coefficient
+r <- assortativity_nominal(
+  graph    = g2,
+  types    = sent_numeric,  # now guaranteed ≥0 integers
+  directed = FALSE
+)
+
+r
+```
+
+
+
+```{r}
+# — 1. Clean your edge list and build the graph —
+edge_list_clean <- edge_list %>%
+  filter(
+    !is.na(from), 
+    !is.na(to),
+    !str_detect(from, "^https?://"),
+    !str_detect(to,   "^https?://")
+  )
+
+g <- graph_from_data_frame(edge_list_clean, directed = FALSE)
+
+# — 2. Compute each author’s dominant AUTO_SENTIMENT —
+author_sent <- dta %>%
+  filter(!is.na(AUTO_SENTIMENT)) %>%                 # drop rows with no sentiment
+  count(AUTHOR, AUTO_SENTIMENT, name = "n") %>%       # count per author+sentiment
+  group_by(AUTHOR) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>%         # pick the single top sentiment
+  ungroup() %>%
+  select(AUTHOR, sentiment = AUTO_SENTIMENT)          # rename for clarity
+
+# — 3. Attach that sentiment label to each graph vertex —
+V(g)$sentiment <- author_sent$sentiment[
+  match(V(g)$name, author_sent$AUTHOR)
+]
+
+# — 4. Normalize and drop any vertices without a valid sentiment —
+valid_sents <- c("negative", "neutral", "positive")
+
+# trim whitespace & lowercase
+V(g)$sentiment <- V(g)$sentiment %>% 
+  str_trim() %>% 
+  tolower()
+
+# identify bad vertices (either NA or not one of the three)
+bad_vs <- V(g)[ is.na(V(g)$sentiment) | !(V(g)$sentiment %in% valid_sents) ]
+g2     <- delete_vertices(g, bad_vs)
+
+# — 5. Build your types vector: negative→0, neutral→1, positive→2 —
+types <- V(g2)$sentiment %>%
+  recode(
+    negative = "0",
+    neutral  = "1",
+    positive = "2"
+  ) %>%
+  as.integer()
+
+# — 6. Double‐check your mapping —
+print(table(V(g2)$sentiment))  # Should show counts for neg/neu/pos
+print(table(types))            # Should show the same counts under 0/1/2
+
+# — 7. Compute assortativity r —
+r <- assortativity_nominal(g2, types = types, directed = FALSE)
+
+# — 8. Report the result —
+print(glue("Assortativity by AUTO_SENTIMENT = {round(r, 3)}"))
+```
+
+
+
+```{r}
+# 1. Pull the edge list **with author names** directly
+edges <- as_data_frame(g2, what = "edges")
+# at this point `edges$from` and `edges$to` are already the vertex names
+# confirm with:
+str(edges)
+# tibble: ... × 2
+#  from   <chr>  # yes — these are character usernames
+#  to     <chr>
+
+# 2. Make it bidirectional so we can count every user’s neighbors easily
+bidir <- bind_rows(
+  edges %>% transmute(node = from, neighbor = to),
+  edges %>% transmute(node = to,   neighbor = from)
+)
+
+# 3. Annotate each pair with the node’s and neighbor’s sentiment
+bidir <- bidir %>%
+  mutate(
+    node_sent = V(g2)$sentiment[ match(node,     V(g2)$name) ],
+    nbr_sent  = V(g2)$sentiment[ match(neighbor, V(g2)$name) ]
+  )
+
+# 4. For each user, tally total degree and breakdown by sentiment
+connector_df <- bidir %>%
+  group_by(node, node_sent) %>%
+  summarise(
+    degree = n(),                         # total neighbors k_i
+    neg    = sum(nbr_sent == "negative"), # how many negative‐sent neighbors
+    neu    = sum(nbr_sent == "neutral"),  # neutral‐sent neighbors
+    pos    = sum(nbr_sent == "positive"), # positive‐sent neighbors
+    .groups = "drop"
+  ) %>%
+  # 5. Compute the Participation Coefficient P_i
+  mutate(
+    P = 1 
+        - (neg/degree)^2 
+        - (neu/degree)^2 
+        - (pos/degree)^2
+  ) %>%
+  arrange(desc(P))
+
+# 6. Display your top bridge‐users
+connector_df %>%
+  slice_head(n = 100) %>%
+  select(
+    AUTHOR        = node,       # username
+    sentiment     = node_sent,  # their own sentiment
+    degree,                    # how many neighbors they have
+    P_coefficient = P          # their bridging score
+  ) %>%
+  print(n = 100)
+
+
+
+# 1. Build a lookup table from connector_df
+#    (connector_df has columns node, P, degree, node_sent)
+bridge_lookup <- connector_df %>%
+  select(AUTHOR = node, P)  
+
+# 2. Turn g2 into a tidygraph, and add the P value
+tg <- as_tbl_graph(g2) %>%
+  # name is already the vertex attribute for the username
+  left_join(bridge_lookup, by = c("name" = "AUTHOR")) %>%
+  # replace any missing P with 0 (non‐bridges)
+  mutate(P = replace_na(P, 0))
+
+# — B) Visualize with ggraph —
+
+ggraph(tg, layout = "fr") +                     # force‐directed layout
+  # edges in light gray
+  geom_edge_link(alpha = 0.2, colour = "grey70") +
+  # nodes sized by P, colored by P
+  geom_node_point(aes(size = P, color = P)) +
+  # label only the top 10 by P
+  geom_node_text(aes(label = if_else(rank(-P) <= 10, name, "")),
+                 repel = TRUE, size = 3) +
+  scale_size_continuous(range = c(2, 8)) +       # small→large sizes
+  scale_color_viridis_c(option = "plasma") +     # color gradient by P
+  theme_void() +
+  labs(
+    title    = "Reddit Conversation Network",
+    subtitle = "Node size & color ∝ participation coefficient P (bridge‐score)",
+    caption  = "Top 10 bridge‐users are labeled"
+  )
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

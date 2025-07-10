@@ -1,0 +1,467 @@
+---
+title: "Analysis Final"
+author: "Lux"
+date: "2025-07-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# This chunk sets up the R Markdown environment.
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Part 1: Data Preparation and Network Construction
+
+This section covers all the necessary steps to take the initial dataset and transform it into a high-quality, weighted network graph object (g_weighted) that serves as the foundation for all subsequent analysis.
+
+
+### 1.1: Loading Libraries and Data
+
+First, we load all the necessary R packages for data manipulation, network analysis, and visualization. Then, we load the raw dataset of Reddit comments.
+
+
+```{r}
+
+# --- Load Libraries ---
+library(tidyverse)
+library(readxl)
+library(here)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(viridis)
+library(stringr)
+
+# --- Load Data ---
+# Load data from the "Data" subfolder
+dta <- read_excel(here("Data", "komentari_final.xlsx"))
+
+# --- Initial Data Reshaping ---
+# Select only the columns needed for this analysis
+dta <- dta %>%
+  select(
+    DATE, TIME, TITLE, FROM, AUTHOR, URL, 
+    AUTO_SENTIMENT, FULL_TEXT, matched_word
+  )
+```
+
+### 1.2: Data Cleaning and Validation
+
+Social media data is often messy. This critical step ensures our network represents real human interactions by filtering out bots, deleted users, and malformed data entries.
+
+
+```{r}
+# Filter for valid Reddit author names and remove bots/deleted users
+dta_cleaned <- dta %>%
+  filter(
+    !is.na(AUTHOR),                                  # Remove rows where author is NA
+    !str_detect(AUTHOR, "^http"),                    # Remove rows where author is a URL
+    str_detect(AUTHOR, "^[A-Za-z0-9_-]{3,20}$"),      # Keep only valid-looking usernames
+    AUTHOR != "[deleted]",                           # Remove deleted users
+    AUTHOR != "AutoModerator"                        # Remove common bots
+  )
+
+# Report on the effect of cleaning
+cat("Original rows:", nrow(dta), "\n")
+cat("Rows after cleaning:", nrow(dta_cleaned), "\n")
+```
+
+### 1.3: Building the Co-participation Network
+
+
+Here, we construct the user-to-user network. An edge is created between two users if they comment in the same thread, and the edge weight is the number of threads they have in common.
+
+
+```{r}
+
+# 1. Create a unique ID for each thread from its URL
+df2 <- dta_cleaned %>%
+  mutate(thread_id = str_extract(URL, "(?<=comments/)[^/]+"))
+
+# 2. Identify unique authors participating in each thread
+threads2 <- df2 %>%
+  distinct(thread_id, AUTHOR) %>%
+  group_by(thread_id) %>%
+  filter(n() >= 2) %>%
+  summarize(authors = list(AUTHOR), .groups = "drop")
+
+# 3. Build a weighted edge list from author co-participation
+weighted_edge_list <- threads2 %>%
+  mutate(
+    pairs = map(authors, ~ {
+      m <- combn(.x, 2)
+      sorted_pairs_matrix <- t(apply(m, 2, sort))
+      tibble(from = sorted_pairs_matrix[, 1], to = sorted_pairs_matrix[, 2])
+    })
+  ) %>%
+  select(pairs) %>%
+  unnest(pairs) %>%
+  count(from, to, name = "weight")
+
+# 4. Create the final, weighted igraph object
+g_weighted <- graph_from_data_frame(weighted_edge_list, directed = FALSE)
+```
+
+
+## Part 2: Network Analysis and Characterization
+
+
+With the network built, we now analyze its properties. This section calculates all the key metrics and prepares all the necessary data frames for the final visualizations.
+
+
+### 2.1: Structural Analysis (Modularity & Assortativity)
+
+We first detect communities using the Louvain algorithm and then measure the network's overall segregation and homophily.
+
+```{r}
+# --- Detect communities ---
+comm_weighted <- cluster_louvain(g_weighted, weights = E(g_weighted)$weight)
+modularity_score <- modularity(comm_weighted)
+community_sizes <- sizes(comm_weighted)
+
+# --- Calculate assortativity ---
+# Determine each author's "primary subreddit"
+author_subreddits <- dta_cleaned %>%
+  count(AUTHOR, FROM, name = "posts_in_sub") %>%
+  group_by(AUTHOR) %>%
+  filter(posts_in_sub == max(posts_in_sub)) %>%
+  slice(1) %>% # Take the first one in case of a tie
+  ungroup() %>%
+  select(AUTHOR, primary_subreddit = FROM)
+
+# Add subreddit as a vertex attribute to the graph object
+V(g_weighted)$subreddit <- author_subreddits$primary_subreddit[
+  match(V(g_weighted)$name, author_subreddits$AUTHOR)
+]
+
+# Calculate the assortativity coefficient
+assortativity_score <- assortativity_nominal(
+  g_weighted,
+  as.factor(V(g_weighted)$subreddit),
+  directed = FALSE
+)
+```
+
+
+### 2.2: Bridge Analysis (Participation Coefficient)
+
+Next, we analyze the connections between communities by calculating the Participation Coefficient (P) for every user. This will reveal the "clash of communities" finding.
+
+
+```{r}
+# Add community membership as a numeric attribute
+V(g_weighted)$community <- as.integer(membership(comm_weighted))
+
+# Create a dataframe of edges with community info for both ends
+edge_df_comm <- as_data_frame(g_weighted, what = "edges") %>%
+  left_join(tibble(from_comm = V(g_weighted)$community, from_name = V(g_weighted)$name), by = c("from" = "from_name")) %>%
+  left_join(tibble(to_comm = V(g_weighted)$community, to_name = V(g_weighted)$name), by = c("to" = "to_name"))
+
+# Function to calculate P
+calc_participation <- function(node_name) {
+  node_edges <- edge_df_comm %>% filter(from == node_name | to == node_name)
+  if (nrow(node_edges) == 0) return(0)
+  Ki <- nrow(node_edges)
+  other_communities <- c(node_edges$to_comm[node_edges$from == node_name], node_edges$from_comm[node_edges$to == node_name])
+  kis_sq_sum <- other_communities %>% tibble(comm = .) %>% count(comm) %>% mutate(kis_sq = (n / Ki)^2) %>% summarize(sum_val = sum(kis_sq)) %>% pull(sum_val)
+  P <- 1 - kis_sq_sum
+  return(P)
+}
+
+# Apply to all nodes to get their P-scores
+participation_coeffs <- map_dbl(V(g_weighted)$name, calc_participation)
+
+# Create the final dataframe of bridge scores
+connector_df <- tibble(
+  node = V(g_weighted)$name,
+  P = participation_coeffs,
+  degree = degree(g_weighted)
+)
+```
+
+
+### 2.3: Content Analysis (Sentiment)
+
+Finally, we prepare the data for characterizing the communities by their emotional tone.
+
+```{r}
+# Join community data back to the main cleaned data
+dta_with_communities <- dta_cleaned %>%
+  left_join(tibble(AUTHOR = V(g_weighted)$name, community = V(g_weighted)$community), by = "AUTHOR") %>%
+  filter(!is.na(community))
+
+# Calculate sentiment proportions for each community
+sentiment_by_community <- dta_with_communities %>%
+  group_by(community) %>%
+  count(AUTO_SENTIMENT) %>%
+  mutate(proportion = n / sum(n))
+```
+
+
+
+## Part 3: Outputs for Journal Submission
+
+This final section contains the self-contained code chunks that produce each of the essential tables and figures for the final paper. All data preparation is complete; these chunks are for output only.
+
+
+These key statistics should be reported directly in the text of your results section.
+
+```{r}
+cat("Total Users (Nodes) in Network:", vcount(g_weighted), "\n")
+cat("Total Connections (Edges) in Network:", ecount(g_weighted), "\n\n")
+
+cat("Network Modularity (Q):", round(modularity_score, 3), "\n")
+cat("Network Assortativity (r):", round(assortativity_score, 3), "\n\n")
+cat("Median Participation Coefficient (P):", round(median(connector_df$P), 3), "\n")
+```
+
+### Figure 1: Community Composition Bar Chart
+
+This figure provides the primary evidence for structural segregation along subreddit lines.
+
+
+```{r}
+# Identify top 5 communities for visualization
+top_5_community_ids <- names(head(sort(community_sizes, decreasing = TRUE), 5))
+
+# Create the summary dataframe for plotting
+community_subreddit_table <- table(
+  `Louvain_Community` = V(g_weighted)$community,
+  `Primary_Subreddit` = V(g_weighted)$subreddit
+)
+
+top_communities_summary <- as.data.frame.matrix(community_subreddit_table) %>%
+  rownames_to_column(var = "Louvain_Community") %>%
+  pivot_longer(cols = -Louvain_Community, names_to = "Primary_Subreddit", values_to = "Member_Count") %>%
+  filter(Member_Count > 0, Louvain_Community %in% top_5_community_ids) %>%
+  arrange(as.integer(Louvain_Community), desc(Member_Count))
+
+# Plot the data
+ggplot(top_communities_summary, aes(x = Louvain_Community, y = Member_Count, fill = Primary_Subreddit)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal(base_family = "sans") +
+  scale_fill_viridis_d(option = "cividis", name = "Primary Subreddit") +
+  labs(
+    title = "Subreddit Composition of the Largest Network Communities",
+    subtitle = "Each structural community is dominated by a single subreddit.",
+    x = "Louvain-Detected Community ID",
+    y = "Number of Members"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+
+
+```{r}
+### Figure 1: Community Composition Bar Chart (Revised)
+
+# This figure provides the primary evidence for structural segregation along subreddit lines.
+# We will group smaller subreddits into an "Other" category to make the plot readable.
+
+```{r figure-1-community-composition-revised}
+# Identify top 5 communities for visualization
+top_5_community_ids <- names(head(sort(community_sizes, decreasing = TRUE), 5))
+
+# Create the summary dataframe for plotting
+community_subreddit_table <- table(
+  `Louvain_Community` = V(g_weighted)$community,
+  `Primary_Subreddit` = V(g_weighted)$subreddit
+)
+
+top_communities_summary <- as.data.frame.matrix(community_subreddit_table) %>%
+  rownames_to_column(var = "Louvain_Community") %>%
+  pivot_longer(cols = -Louvain_Community, names_to = "Primary_Subreddit", values_to = "Member_Count") %>%
+  filter(Member_Count > 0, Louvain_Community %in% top_5_community_ids) %>%
+  arrange(as.integer(Louvain_Community), desc(Member_Count))
+
+
+# --- NEW STEP: Group smaller subreddits into "Other" for plotting ---
+# We will keep the top 3 most populous subreddits and lump the rest.
+# The `fct_lump_n()` function is perfect for this.
+plot_data_grouped <- top_communities_summary %>%
+  mutate(
+    # `fct_lump_n` keeps the n most frequent levels of a factor and replaces the rest.
+    # We use `w = Member_Count` to tell it to rank subreddits by their total members,
+    # not just how many times they appear in the table.
+    subreddit_group = fct_lump_n(
+      f = as.factor(Primary_Subreddit), 
+      n = 3, 
+      w = Member_Count, 
+      other_level = "Other"
+    )
+  )
+
+# --- Plot the new, grouped data ---
+ggplot(plot_data_grouped, aes(x = Louvain_Community, y = Member_Count, fill = subreddit_group)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal(base_family = "sans") +
+  scale_fill_viridis_d(option = "cividis", name = "Primary Subreddit") +
+  labs(
+    title = "Subreddit Composition of the Largest Network Communities",
+    subtitle = "Each structural community is dominated by a single subreddit.",
+    x = "Louvain-Detected Community ID",
+    y = "Number of Members"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+
+### Figure 2: Distribution of Participation Coefficients
+
+This histogram delivers the central, counter-intuitive finding about widespread cross-community engagement.
+
+
+
+```{r}
+ggplot(connector_df, aes(x = P)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") +
+  geom_vline(xintercept = median(connector_df$P), color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = median(connector_df$P) * 1.05, y = Inf, 
+           label = paste("Median P =", round(median(connector_df$P), 2)), 
+           hjust = 0, vjust = 2, color = "red", fontface = "bold") +
+  labs(
+    title = "Distribution of User Bridge Scores (Participation Coefficient, P)",
+    subtitle = "The median user is a 'bridge' (P > 0.5), indicating high cross-community engagement.",
+    x = "Participation Coefficient (P)",
+    y = "Number of Users"
+  ) +
+  theme_minimal()
+```
+
+
+### Table 1: Profile of Top 10 Bridge Users
+
+This table identifies the key actors driving cross-community interaction and reveals the asymmetry of engagement.
+
+
+```{r}
+top_10_bridges <- connector_df %>%
+  arrange(desc(P)) %>%
+  head(10) %>%
+  left_join(author_subreddits, by = c("node" = "AUTHOR")) %>%
+  select(
+    `User` = node,
+    `P-Score` = P,
+    `Degree` = degree,
+    `Primary Subreddit` = primary_subreddit
+  ) %>%
+  mutate(`P-Score` = round(`P-Score`, 3))
+
+# Use knitr::kable for a publication-quality table
+knitr::kable(top_10_bridges, caption = "Profile of the Top 10 Most Significant Bridge Users.")
+```
+
+
+### Figure 3: Sentiment Profile of Major Communities
+
+This visualization reveals the distinct "emotional signatures" of the primary communities.
+
+```{r}
+# Filter sentiment data for top 5 communities
+sentiment_plot_data <- sentiment_by_community %>%
+  filter(community %in% top_5_community_ids)
+
+# Plot the data
+ggplot(sentiment_plot_data, aes(x = as.factor(community), y = proportion, fill = AUTO_SENTIMENT)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(
+    values = c("negative" = "#d95f02", "neutral" = "#7570b3", "positive" = "#1b9e77"),
+    name = "Sentiment"
+  ) +
+  theme_minimal(base_family = "sans") +
+  labs(
+    title = "Comparative Sentiment Analysis of Top Network Communities",
+    subtitle = "Communities exhibit distinct emotional profiles, with some being significantly more negative.",
+    x = "Louvain-Detected Community ID",
+    y = "Proportion of Comments"
+  ) +
+  coord_flip()
+```
+
+### Figure 4: The "Clash of Communities" Network Visualization
+
+This is the capstone figure, visualizing the network's structure while highlighting the crucial role of bridge users.
+
+```{r}
+# Create the tidygraph object for plotting
+tg_for_plotting <- as_tbl_graph(g_weighted) %>%
+  activate(nodes) %>%
+  left_join(select(connector_df, name = node, P), by = "name") %>%
+  mutate(P = replace_na(P, 0))
+
+# Plot the network
+set.seed(12345) # for reproducible layout
+ggraph(tg_for_plotting, layout = "fr") +
+  geom_edge_link(alpha = 0.1, colour = "grey70", width = 0.2) +
+  geom_node_point(aes(size = P, color = P)) +
+  geom_node_text(aes(label = if_else(rank(-P) <= 10, name, "")),
+                 repel = TRUE, size = 3, fontface = "bold") +
+  scale_size_continuous(range = c(0.5, 8), name = "P-Score") +
+  scale_color_viridis_c(option = "plasma", name = "P-Score") +
+  theme_graph(base_family = "sans") +
+  labs(
+    title = "The 'Clash of Communities' Network: Polarization and Connectivity",
+    subtitle = "Node size & color are proportional to the user's bridge score (P).",
+    caption = "Top 10 most significant bridge-users are labeled."
+  )
+```
+
+```{r}
+# --- NEW STEP: Isolate the Giant Component ---
+# The decompose() function breaks the graph into a list of its connected components.
+components <- decompose(g_weighted)
+
+# We find the largest component by seeing which one has the most nodes (vcount).
+giant_component_graph <- components[[which.max(sapply(components, vcount))]]
+
+
+# --- Now, create the tidygraph object for plotting FROM THE GIANT COMPONENT ---
+tg_for_plotting <- as_tbl_graph(giant_component_graph) %>%
+  activate(nodes) %>%
+  # We join the P-scores that we calculated earlier for the whole graph.
+  left_join(select(connector_df, name = node, P), by = "name") %>%
+  mutate(P = replace_na(P, 0))
+
+
+# --- Plot the Giant Component Network ---
+set.seed(12345) # for reproducible layout
+ggraph(tg_for_plotting, layout = "fr") +
+  geom_edge_link(alpha = 0.1, colour = "grey70", width = 0.2) +
+  geom_node_point(aes(size = P, color = P)) +
+  # Label the top 10 bridge users *within this main component*.
+  geom_node_text(aes(label = if_else(rank(-P) <= 10, name, "")),
+                 repel = TRUE, size = 3, fontface = "bold",
+                 point.padding = unit(0.2, "lines"),
+                 max.overlaps = Inf) + # Helps ensure labels are drawn
+  scale_size_continuous(range = c(0.5, 8), name = "P-Score") +
+  scale_color_viridis_c(option = "plasma", name = "P-Score") +
+  theme_graph(base_family = "sans") +
+  labs(
+    title = "The 'Clash of Communities' Network: Main Component",
+    subtitle = "Node size & color are proportional to the user's bridge score (P).",
+    caption = "Top 10 most significant bridge-users within the main component are labeled."
+  )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
