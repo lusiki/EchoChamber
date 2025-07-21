@@ -252,11 +252,6 @@ ggplot(top_communities_summary, aes(x = Louvain_Community, y = Member_Count, fil
 
 
 
-```{r}
-### Figure 1: Community Composition Bar Chart (Revised)
-
-# This figure provides the primary evidence for structural segregation along subreddit lines.
-# We will group smaller subreddits into an "Other" category to make the plot readable.
 
 ```{r figure-1-community-composition-revised}
 # Identify top 5 communities for visualization
@@ -292,15 +287,20 @@ plot_data_grouped <- top_communities_summary %>%
   )
 
 # --- Plot the new, grouped data ---
-ggplot(plot_data_grouped, aes(x = Louvain_Community, y = Member_Count, fill = subreddit_group)) +
+ggplot(plot_data_grouped, 
+       aes(x = Louvain_Community, 
+           y = Member_Count, 
+           fill = subreddit_group)) +
   geom_bar(stat = "identity", position = "stack") +
-  theme_minimal(base_family = "sans") +
-  scale_fill_viridis_d(option = "cividis", name = "Primary Subreddit") +
+  # Use a black & white theme
+  theme_bw(base_family = "sans") +
+  # Greyscale fill
+  scale_fill_grey(start = 0.8, end = 0.2, 
+                  name = "Primary Subreddit") +
   labs(
-    title = "Subreddit Composition of the Largest Network Communities",
-    subtitle = "Each structural community is dominated by a single subreddit.",
-    x = "Louvain-Detected Community ID",
-    y = "Number of Members"
+    title    = "",
+    x        = "Louvain-Detected Community ID",
+    y        = "Number of Members"
   ) +
   theme(legend.position = "bottom")
 ```
@@ -320,8 +320,8 @@ ggplot(connector_df, aes(x = P)) +
            label = paste("Median P =", round(median(connector_df$P), 2)), 
            hjust = 0, vjust = 2, color = "red", fontface = "bold") +
   labs(
-    title = "Distribution of User Bridge Scores (Participation Coefficient, P)",
-    subtitle = "The median user is a 'bridge' (P > 0.5), indicating high cross-community engagement.",
+    title = "Figure 3: Distribution of User Bridge Scores (Participation Coefficient, P)",
+    subtitle = "",
     x = "Participation Coefficient (P)",
     y = "Number of Users"
   ) +
@@ -370,8 +370,8 @@ ggplot(sentiment_plot_data, aes(x = as.factor(community), y = proportion, fill =
   ) +
   theme_minimal(base_family = "sans") +
   labs(
-    title = "Comparative Sentiment Analysis of Top Network Communities",
-    subtitle = "Communities exhibit distinct emotional profiles, with some being significantly more negative.",
+    title = "Figure 2: Comparative Sentiment Analysis of Top Network Communities",
+    subtitle = "",
     x = "Louvain-Detected Community ID",
     y = "Proportion of Comments"
   ) +
@@ -437,8 +437,8 @@ ggraph(tg_for_plotting, layout = "fr") +
   scale_color_viridis_c(option = "plasma", name = "P-Score") +
   theme_graph(base_family = "sans") +
   labs(
-    title = "The 'Clash of Communities' Network: Main Component",
-    subtitle = "Node size & color are proportional to the user's bridge score (P).",
+    title = "Figure 4: The 'Clash of Communities' Network",
+    subtitle = "",
     caption = "Top 10 most significant bridge-users within the main component are labeled."
   )
 ```

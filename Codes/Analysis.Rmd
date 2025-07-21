@@ -472,7 +472,9 @@ tidy_text_  %>%
 
 
 # Load necessary libraries
-tidy_text_ <- openxlsx::read.xlsx("stemmed_titles_reddit.xlsx")
+tidy_text_ <- read_excel(here("Data", "stemmed_titles_reddit.xlsx"))
+
+
 
 tidy_text_ <- tidy_text_ %>%
   rename(
@@ -485,7 +487,7 @@ tidy_text_ <- tidy_text_ %>%
 tidy_text_$DATE <- as.Date(tidy_text_$DATE, format = "%Y-%m-%d",origin = "1899-12-30")
 
 
-
+str(tidy_text_)
 ```
 
 
